@@ -152,24 +152,24 @@ func (self VerifyProcessLoadDLLPlugin) Call(
 		scope.Log("White list path: %v", whitelistPath)
 
 		// Get all process load DLL
-		//processDllPlugin := &ProcessDllPlugin{}
-		//
-		//scope.Log("start get all process load DLL with PID: %d", arg.PID)
-		//processDllArgs := ordereddict.NewDict().
-		//	Set("pid", arg.PID)
-		//
-		//var jsonFilePath string
-		//for row := range processDllPlugin.Call(ctx, scope, processDllArgs) {
-		//	if dict, ok := row.(*ordereddict.Dict); ok {
-		//		if path, ok := dict.Get("result_file"); ok {
-		//			jsonFilePath = path.(string)
-		//		}
-		//	}
-		//}
+		processDllPlugin := &ProcessDllPlugin{}
+
+		scope.Log("start get all process load DLL with PID: %d", arg.PID)
+		processDllArgs := ordereddict.NewDict().
+			Set("pid", arg.PID)
+
+		var jsonFilePath string
+		for row := range processDllPlugin.Call(ctx, scope, processDllArgs) {
+			if dict, ok := row.(*ordereddict.Dict); ok {
+				if path, ok := dict.Get("result_file"); ok {
+					jsonFilePath = path.(string)
+				}
+			}
+		}
 
 		scope.Log("Get all Process load DLL successfully ><")
 
-		jsonFilePath := "C:\\Users\\Savage\\Downloads\\velociraptor-master\\velociraptor-master\\vql\\hunting-sideload\\DLLList_1735739229477421900.json"
+		//jsonFilePath := "C:\\Users\\Savage\\Downloads\\velociraptor-master\\velociraptor-master\\vql\\hunting-sideload\\DLLList_1735739229477421900.json"
 		if jsonFilePath == "" {
 			scope.Log("Failed to get JSON file path from process_dll_plugin")
 			return
@@ -281,6 +281,9 @@ func (self VerifyProcessLoadDLLPlugin) Call(
 				scope.Log("Failed to query database")
 				return
 			}
+
+			scope.Log("Result after query DB: %d", PointDB)
+
 			analysisResult := DllAnalysisResult{
 				ID:             i,
 				DllInfos:       dllInfo,
