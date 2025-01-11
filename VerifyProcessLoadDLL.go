@@ -5,29 +5,27 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/Velocidex/ordereddict"
+	_ "github.com/go-sql-driver/mysql"
 	"io/ioutil"
 	"os"
 	"os/exec"
-	_ "os/exec"
 	"path/filepath"
-	_ "path/filepath"
 	"strings"
 	"time"
-	_ "time"
-
-	"github.com/Velocidex/ordereddict"
-	_ "github.com/go-sql-driver/mysql"
 	vql_subsystem "www.velocidex.com/golang/velociraptor/vql"
 	vfilter "www.velocidex.com/golang/vfilter"
 	"www.velocidex.com/golang/vfilter/arg_parser"
 	"www.velocidex.com/golang/vfilter/types"
 )
 
-type VerifyDLLArgs struct {
-	ScanPath       string `vfilter:"required,field=scan_path,doc=Path to scan for DLLs"`
-	SigcheckPath   string `vfilter:"optional,field=sigcheck_path,doc=Path to sigcheck.exe"`
-	VerifyToolPath string `vfilter:"optional,field=verify_tool_path,doc=Path to verify_dir.exe"`
+type VerifyProcessLoadDLLArgs struct {
+	PID            int64  `vfilter:"optional,field=pid,doc=Process ID to verify"`
+	ScanPath       string `vfilter:"optional,field=scan_path,doc=Path to scan for DLLs"`
+	SigcheckPath   string `vfilter:"required,field=sigcheck_path,doc=Path to sigcheck.exe"`
+	VerifyToolPath string `vfilter:"required,field=verify_tool_path,doc=Path to verify_dir.exe"`
 	HostNameDB     string `vfilter:"required,field=host_name_db,doc=Host name of DLL database"`
+	WhiteListPath  string `vfilter:"optional,field=white_list_path,doc=Path to white list file"`
 }
 
 type DllAnalysisResult struct {
@@ -92,25 +90,43 @@ func isDLLLegitimate(db *sql.DB, hashSHA1 string) int {
 	return 1
 }
 
+func getWhiteListPath(whiteListPath string) []string {
+	parts := strings.Split(whiteListPath, ";")
+	for i, part := range parts {
+		part = strings.ToLower(part)
+		parts[i] = strings.ReplaceAll(part, `\\`, `\`)
+	}
+	return parts
+}
+
+func pathInWhitelist(path string, Whitelist []string) bool {
+	for _, whitelistPath := range Whitelist {
+		if strings.HasPrefix(strings.ToLower(path), whitelistPath) {
+			return true
+		}
+	}
+	return false
+}
+
 //Create plugin #############################################################################################################
 
-type VerifyDLLPlugin struct{}
+type VerifyProcessLoadDLLPlugin struct{}
 
-func (self VerifyDLLPlugin) Info(scope vfilter.Scope, type_map *vfilter.TypeMap) *vfilter.PluginInfo {
+func (self VerifyProcessLoadDLLPlugin) Info(scope vfilter.Scope, type_map *vfilter.TypeMap) *vfilter.PluginInfo {
 	return &vfilter.PluginInfo{
-		Name:    "verify_dll_plugin",
-		Doc:     "Check file signature using Sysinternals Sigcheck",
+		Name:    "verify_process_load_dll_plugin",
+		Doc:     "Check running processes for DLLs that may be susceptible to DLL hijacking",
 		ArgType: type_map.AddType(scope, &SigCheckArgs{}),
 	}
 }
 
-func (self VerifyDLLPlugin) Call(
+func (self VerifyProcessLoadDLLPlugin) Call(
 	ctx context.Context,
 	scope vfilter.Scope,
 	args *ordereddict.Dict) <-chan types.Row {
 
 	output_chan := make(chan types.Row)
-	arg := &VerifyDLLArgs{}
+	arg := &VerifyProcessLoadDLLArgs{}
 	go func() {
 		defer close(output_chan)
 		defer vql_subsystem.RegisterMonitor("check_dll_sideload", args)()
@@ -121,27 +137,41 @@ func (self VerifyDLLPlugin) Call(
 			return
 		}
 
+		scope.Log("%v", arg.ScanPath)
+
+		// Connect to database
 		if err = InitializeDB(arg.HostNameDB); err != nil {
-			fmt.Printf("Lỗi kết nối DB: %v\n", err)
+			scope.Log("Lỗi kết nối DB: %v\n", err)
 			return
 		}
 
-		processDllPlugin := &ProcessDllPlugin{}
+		scope.Log("Connect to database successfully")
 
-		processDllArgs := ordereddict.NewDict().
-			Set("pid", 0)
+		// get whitelist path
+		whitelistPath := getWhiteListPath(arg.WhiteListPath)
+		scope.Log("White list path: %v", whitelistPath)
 
-		var jsonFilePath string
-		for row := range processDllPlugin.Call(ctx, scope, processDllArgs) {
-			if dict, ok := row.(*ordereddict.Dict); ok {
-				if path, ok := dict.Get("result_file"); ok {
-					jsonFilePath = path.(string)
-				}
-			}
-		}
-		//jsonFilePath := "C:\\Users\\Savage\\Downloads\\velociraptor-master\\velociraptor-master\\vql\\hunting-sideload\\DLLList_1735739229477421900.json"
+		// Get all process load DLL
+		//processDllPlugin := &ProcessDllPlugin{}
+		//
+		//scope.Log("start get all process load DLL with PID: %d", arg.PID)
+		//processDllArgs := ordereddict.NewDict().
+		//	Set("pid", arg.PID)
+		//
+		//var jsonFilePath string
+		//for row := range processDllPlugin.Call(ctx, scope, processDllArgs) {
+		//	if dict, ok := row.(*ordereddict.Dict); ok {
+		//		if path, ok := dict.Get("result_file"); ok {
+		//			jsonFilePath = path.(string)
+		//		}
+		//	}
+		//}
+
+		scope.Log("Get all Process load DLL successfully ><")
+
+		jsonFilePath := "C:\\Users\\Savage\\Downloads\\velociraptor-master\\velociraptor-master\\vql\\hunting-sideload\\DLLList_1735739229477421900.json"
 		if jsonFilePath == "" {
-			scope.Log("Failed to get JSON file path from process_dll plugin")
+			scope.Log("Failed to get JSON file path from process_dll_plugin")
 			return
 		}
 		jsonData, err := ioutil.ReadFile(jsonFilePath)
@@ -168,6 +198,8 @@ func (self VerifyDLLPlugin) Call(
 			dllInfos = append(dllInfos, dllInfo)
 		}
 
+		// Create file to store data to analyze
+
 		currentDir, err := os.Getwd()
 		if err != nil {
 			scope.Log("Failed to get current directory: %s", err.Error())
@@ -177,8 +209,6 @@ func (self VerifyDLLPlugin) Call(
 		fileNameAnalyze := fmt.Sprintf("dataToAnalyzePath_%d.json", time.Now().UnixNano())
 		dataToAnalyzePath := filepath.Join(currentDir, fileNameAnalyze)
 		resultDataToAnalyzePath := filepath.Join(currentDir, fmt.Sprintf("result_%s", fileNameAnalyze))
-		//dataToAnalyzePath := "C:\\Users\\Savage\\Downloads\\velociraptor-master\\velociraptor-master\\vql\\hunting-sideload\\dataToAnalyzePath_1735745065160644000.json"
-		//resultDataToAnalyzePath := "C:\\Users\\Savage\\Downloads\\velociraptor-master\\velociraptor-master\\vql\\hunting-sideload\\result_dataToAnalyzePath_1735745065160644000.json"
 
 		dataToAnalyze, err := os.Create(dataToAnalyzePath)
 		if err != nil {
@@ -201,6 +231,14 @@ func (self VerifyDLLPlugin) Call(
 
 		// Process each DLL found
 		for i, dllInfo := range dllInfos {
+			if arg.ScanPath != "" && !strings.HasPrefix(strings.ToLower(dllInfo.DllPath), strings.ToLower(arg.ScanPath)) {
+				continue
+			}
+
+			if arg.WhiteListPath != "" && pathInWhitelist(dllInfo.DllPath, whitelistPath) {
+				continue
+			}
+
 			var signatureInfo SignatureInfo
 			pos := dllPathExists(analysisResults, dllInfo.DllPath)
 			if pos != -1 {
@@ -312,5 +350,5 @@ func (self VerifyDLLPlugin) Call(
 }
 
 func init() {
-	vql_subsystem.RegisterPlugin(&VerifyDLLPlugin{})
+	vql_subsystem.RegisterPlugin(&VerifyProcessLoadDLLPlugin{})
 }

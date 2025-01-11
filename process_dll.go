@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Velocidex/ordereddict"
 	"math"
 	"os"
 	"path/filepath"
@@ -13,8 +14,6 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
-
-	"github.com/Velocidex/ordereddict"
 
 	"golang.org/x/sys/windows"
 	vql_subsystem "www.velocidex.com/golang/velociraptor/vql"

@@ -5,7 +5,6 @@ import (
 	_ "encoding/json"
 	"os/exec"
 	"strings"
-
 	"www.velocidex.com/golang/vfilter/arg_parser"
 
 	"github.com/Velocidex/ordereddict"
